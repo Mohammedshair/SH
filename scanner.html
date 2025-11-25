@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>SmartBus — Scanner</title>
+
+    <!-- Local QR Library (keep /lib/html5-qrcode.min.js or adjust to your served path) -->
+    <script src="/lib/html5-qrcode.min.js"></script>
+
+    <style>
+        body{ margin:0;background:#081021;color:white;font-family:Inter,Arial; -webkit-font-smoothing:antialiased; }
+        .container{max-width:1200px;margin:40px auto;padding:20px;display:flex;gap:20px}
+        .left,.right{ background:#0e1a33;padding:20px;border-radius:12px; flex:1;box-shadow:0 0 20px #0008; }
+        h2{margin-top:0}
+        #qr-reader{ width:100%;height:400px;background:black;border-radius:12px; display:flex;align-items:center;justify-content:center;color:white; }
+        button{ padding:10px 18px;border-radius:8px;border:none;cursor:pointer;font-weight:bold;font-size:14px; }
+        .btn-primary{ background:linear-gradient(90deg,#ff2d95,#06b6d4);color:white; }
+        .btn-ghost{ background:transparent;border:1px solid #ffffff33;color:#ccc; }
+        #statusBox{ margin-top:15px;padding:15px;border-radius:10px; background:#fff3;border:1px solid #ffffff22;font-size:18px;font-weight:bold;text-align:center; }
+        .allow{background:#d4ffd4;color:#024702}
+        .deny{background:#ffd4d4;color:#470202}
+        .noentry{background:#fff2c7;color:#573d00}
+        .history{ max-height:250px;overflow:auto;border:1px solid #ffffff22;padding:10px;border-radius:8px; color:var(--muted, #cbd5e1); background:transparent; }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <!-- LEFT SIDE -->
+    <div class="left">
+        <h2>📷 SmartBus — QR Scanner</h2>
+
+        <!-- Camera Selector -->
+        <select id="cameraSelect" style="padding:8px;width:60%;border-radius:8px;"></select>
+        <button id="startBtn" class="btn-primary">Start Camera</button>
+        <button id="stopBtn" class="btn-ghost">Stop</button>
+
+        <div id="qr-reader">Camera not started</div>
+
+        <div id="statusBox" class="noentry">Ready — scan a QR code</div>
+
+        <!-- File upload -->
+        <h3>Select QR from PC:</h3>
+        <input type="file" id="fileInput" accept="image/*" style="padding:8px;border-radius:8px;background:#fff;color:black;">
+        <button id="decodeBtn" class="btn-primary">Decode Selected</button>
+    </div>
+
+    <!-- RIGHT SIDE -->
+    <div class="right">
+        <h2>Manual Verify</h2>
+        <input id="manualToken" placeholder="Paste token here" style="width:100%;padding:10px;border-radius:8px;background:#fff;color:black;">
+        <button id="manualVerifyBtn" class="btn-primary" style="margin-top:10px;">Verify</button>
+
+        <h3>Student Info</h3>
+        <div id="infoBox" style="line-height:1.6;font-size:16px;">
+            USN: - <br>
+            Name: - <br>
+            Reason: -
+        </div>
+
+        <h3>Last Scans</h3>
+        <div id="history" class="history"></div>
+
+        <button onclick="location.href='/'" class="btn-ghost" style="margin-top:20px;">🏠 Home</button>
+    </div>
+
+</div>
+
+<script>
+    // elements
+    const cameraSelect = document.getElementById("cameraSelect");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const statusBox = document.getElementById("statusBox");
+    const fileInput = document.getElementById("fileInput");
+    const decodeBtn = document.getElementById("decodeBtn");
+    const historyEl = document.getElementById("history");
+    const infoBox = document.getElementById("infoBox");
+    const manualToken = document.getElementById("manualToken");
+    const manualVerifyBtn = document.getElementById("manualVerifyBtn");
+
+    let qrScanner = null;
+    let isRunning = false;
+    const MAX_HISTORY = 25;
+    let scanHistory = [];
+
+    function addHistory(resultText){
+      const ts = new Date().toLocaleTimeString();
+      scanHistory.unshift(`${ts} — ${resultText}`);
+      if (scanHistory.length > MAX_HISTORY) scanHistory.length = MAX_HISTORY;
+      historyEl.innerHTML = scanHistory.map(e => `<div style="padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.04)">${e}</div>`).join("");
+    }
+
+    // Try to populate cameras (gracefully fail if library missing/permissions)
+    async function loadCameras(){
+      try{
+        if (typeof Html5Qrcode === 'undefined') throw new Error('Html5Qrcode library not loaded');
+        const devices = await Html5Qrcode.getCameras();
+        cameraSelect.innerHTML = "";
+        if (!devices || devices.length === 0){
+          cameraSelect.appendChild(new Option('No camera detected',''));
+          return;
+        }
+        devices.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.id;
+          opt.textContent = d.label || "Camera";
+          cameraSelect.appendChild(opt);
+        });
+      } catch(err){
+        cameraSelect.innerHTML = ""; cameraSelect.appendChild(new Option('Library or camera blocked',''));
+        console.warn('loadCameras error:', err);
+      }
+    }
+    loadCameras();
+
+    // Start camera
+    startBtn.onclick = async () => {
+      const camId = cameraSelect.value;
+      if (!camId) return alert("No camera selected or available.");
+      if (typeof Html5Qrcode === 'undefined') return alert("Scanner library not found. Place html5-qrcode.min.js at /lib and reload.");
+
+      qrScanner = new Html5Qrcode("qr-reader");
+      statusBox.textContent = "Starting camera...";
+      try{
+        await qrScanner.start(camId, { fps: 10, qrbox: 250 }, (decoded) => {
+          // decoded is token string from QR
+          verifyToken(decoded);
+        }, (err) => {
+          // ignore decode errors
+        });
+        isRunning = true;
+        statusBox.textContent = "Scanning...";
+        statusBox.className = "noentry";
+      } catch(e){
+        console.error('camera start failed', e);
+        alert("Camera failed to start. Check permissions and that no other app is using the camera.");
+        statusBox.textContent = "Camera failed";
+      }
+    };
+
+    // Stop camera
+    stopBtn.onclick = async () => {
+      if (qrScanner){
+        try { await qrScanner.stop(); } catch(e) { console.warn(e); }
+        try { qrScanner.clear(); } catch(e) {}
+        qrScanner = null;
+        isRunning = false;
+        statusBox.textContent = "Camera stopped";
+      }
+    };
+
+    // verification helper
+    async function verifyToken(token){
+      // send token to backend /api/verify
+      try {
+        const res = await fetch("/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token })
+        });
+        const json = await res.json().catch(()=>({ result: "NO_ENTRY", reason: "invalid-response" }));
+
+        // update UI (show result only in history, not the full token)
+        const ts = new Date().toLocaleTimeString();
+        if (json.result === "ALLOW"){
+          statusBox.textContent = "ALLOWED — " + (json.name || json.usn || "");
+          statusBox.className = "allow";
+          addHistory("ALLOW");
+        } else if (json.result === "DENY"){
+          statusBox.textContent = "DENIED — " + (json.reason || "");
+          statusBox.className = "deny";
+          addHistory("DENY");
+        } else {
+          statusBox.textContent = "NO ENTRY — " + (json.reason || "");
+          statusBox.className = "noentry";
+          addHistory("NO ENTRY");
+        }
+
+        // update small details
+        infoBox.innerHTML = `USN: ${json.usn || "-"}<br>Name: ${json.name || "-"}<br>Reason: ${json.reason || "-"}`;
+      } catch (e){
+        console.error('verifyToken error', e);
+        statusBox.textContent = "Network / verify error";
+        statusBox.className = "noentry";
+        addHistory("VERIFY ERROR");
+      }
+    }
+
+    // Decode uploaded file
+    decodeBtn.onclick = async () => {
+      const file = fileInput.files[0];
+      if (!file) return alert("Select an image file containing the QR first.");
+      if (typeof Html5Qrcode === 'undefined') return alert("Scanner library not loaded. Place html5-qrcode.min.js at /lib and reload.");
+
+      // create temp div for scanFile fallback implementations
+      const tmpId = "tmp-scanner-for-file";
+      let tmp = document.getElementById(tmpId);
+      if (!tmp) { tmp = document.createElement("div"); tmp.id = tmpId; tmp.style.display = "none"; document.body.appendChild(tmp); }
+
+      try {
+        let decoded = null;
+        if (Html5Qrcode.scanFile) {
+          decoded = await Html5Qrcode.scanFile(file, /*showImage=*/ false);
+        } else {
+          const tmpScanner = new Html5Qrcode(tmpId);
+          decoded = await tmpScanner.scanFile(file, /*showImage=*/ false);
+          try { await tmpScanner.clear(); } catch(e){}
+        }
+        if (decoded) {
+          await verifyToken(decoded);
+        } else {
+          alert("No QR code found in the image.");
+          addHistory("NO ENTRY");
+        }
+      } catch(err){
+        console.error('file decode error', err);
+        alert("Failed to decode file.");
+        addHistory("DECODE ERROR");
+      } finally {
+        // cleanup
+        try { tmp.remove(); } catch(e){}
+      }
+    };
+
+    // Manual verify
+    manualVerifyBtn.onclick = () => {
+      const t = manualToken.value.trim();
+      if (!t) return alert("Paste token first");
+      verifyToken(t);
+    };
+
+    // Make clicking once enable audio/vibration gestures if you use them later
+    document.addEventListener('click', ()=> { try { window.AudioContext && new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }, { once:true });
+
+    // Setup: try to populate cameras on load
+    document.addEventListener('DOMContentLoaded', async () => {
+      await new Promise(r => setTimeout(r, 80));
+      await loadCameras();
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>SmartBus — Crazy QR Generator</title>
+
+    <!-- libs: client QR preview + confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+
+    <style>
+        :root{
+          --bg1:#04091a; --bg2:#071b3a; --accent:#ff2d95; --accent2:#7c3aed;
+          --glass: rgba(255,255,255,0.04);
+          --muted: rgba(255,255,255,0.7);
+        }
+        *{box-sizing:border-box}
+        body{
+          margin:0;
+          min-height:100vh;
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+          color:#fff;
+          background:
+            radial-gradient(600px 400px at 10% 20%, rgba(124,58,237,0.12), transparent),
+            radial-gradient(800px 500px at 90% 80%, rgba(6,182,212,0.08), transparent),
+            linear-gradient(180deg,var(--bg1),var(--bg2));
+          -webkit-font-smoothing:antialiased;
+          -moz-osx-font-smoothing:grayscale;
+        }
+
+        /* floating neon blobs */
+        .blob{position:fixed;filter:blur(80px);opacity:0.75;z-index:0;pointer-events:none}
+        .b1{width:420px;height:420px;left:-140px;top:-80px;background:radial-gradient(circle at 20% 30%, rgba(124,58,237,0.95), rgba(124,58,237,0.25));animation:float1 9s ease-in-out infinite}
+        .b2{width:360px;height:360px;right:-120px;bottom:-120px;background:radial-gradient(circle at 70% 70%, rgba(6,182,212,0.9), rgba(6,182,212,0.18));animation:float2 11s ease-in-out infinite}
+        @keyframes float1{0%{transform:translateY(0)}50%{transform:translateY(22px) rotate(2deg)}100%{transform:translateY(0)}}
+        @keyframes float2{0%{transform:translateY(0)}50%{transform:translateY(-20px) rotate(-2deg)}100%{transform:translateY(0)}}
+
+        .wrap{position:relative;z-index:1;max-width:1100px;margin:40px auto;padding:28px;display:grid;grid-template-columns: 1fr 420px;gap:26px}
+        @media(max-width:980px){.wrap{grid-template-columns:1fr;padding:18px} .rightCol{order:-1}}
+
+        .card{
+          background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+          border:1px solid rgba(255,255,255,0.06);
+          border-radius:14px;padding:22px;box-shadow:0 10px 40px rgba(2,6,23,0.6);
+          backdrop-filter: blur(8px) saturate(140%);
+        }
+
+        header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+        header h1{font-size:20px;margin:0}
+        header p{margin:0;color:var(--muted);font-size:13px}
+
+        .formRow{display:flex;gap:12px;margin-bottom:12px}
+        input[type="text"], input[type="date"]{
+          flex:1;padding:12px;border-radius:10px;border:none;background:var(--glass);color:#fff;
+          outline:none;font-size:14px
+        }
+        input::placeholder{color:rgba(255,255,255,0.45)}
+        label.small{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+
+        .actions{display:flex;gap:12px;align-items:center;margin-top:10px}
+        .btn{
+          padding:11px 16px;border-radius:12px;border:none;cursor:pointer;font-weight:700;
+          display:inline-flex;align-items:center;gap:10px;
+        }
+        .btn-primary{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 8px 28px rgba(124,58,237,0.18)}
+        .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+        .btn:active{transform:translateY(1px)}
+
+        .muted{color:var(--muted);font-size:13px;margin-top:8px}
+
+        /* right column */
+        .rightCol{display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:flex-start}
+        .previewCard{width:100%;display:flex;flex-direction:column;align-items:center;padding:18px;border-radius:12px;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.04)}
+        /* canvas container style; actual element is <canvas> */
+        .qrCanvas{width:260px;height:260px;background:#fff;padding:12px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+        .serverQr{width:200px;height:200px;border-radius:8px;border:4px solid rgba(255,255,255,0.04);background:#fff;display:block}
+        .tokenBox{width:100%;padding:10px;border-radius:8px;background:rgba(0,0,0,0.25);font-family:monospace;color:#fff;overflow-wrap:anywhere}
+
+        .small{font-size:13px;color:var(--muted)}
+
+        /* success glow */
+        .pulse{
+          position:relative;overflow:visible;margin-top:12px;
+        }
+        .pulse::after{
+          content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:260px;height:260px;border-radius:50%;background:radial-gradient(circle, rgba(124,58,237,0.14), transparent 30%);opacity:0;transition:opacity .35s;
+        }
+        .pulse.on::after{opacity:1}
+
+        footer{margin-top:18px;text-align:center;color:var(--muted);font-size:13px}
+    </style>
+</head>
+<body>
+<div class="blob b1"></div>
+<div class="blob b2"></div>
+
+<div class="wrap">
+    <div class="card">
+        <header>
+            <div>
+                <h1>🎛️ SmartBus — QR Generator</h1>
+                <p class="small">Create signed pass tokens & printable QR codes (in-memory demo)</p>
+            </div>
+            <div>
+                <button class="btn btn-ghost" onclick="location.href='/'">🏠 Home</button>
+            </div>
+        </header>
+
+        <div>
+            <label class="small">Student USN</label>
+            <div class="formRow">
+                <input id="usn" type="text" placeholder="1NM20CS001" />
+                <input id="route" type="text" placeholder="Route e.g. R3" />
+            </div>
+
+            <label class="small">Student Name</label>
+            <div class="formRow">
+                <input id="name" type="text" placeholder="A. Student" />
+            </div>
+
+            <label class="small">Pass Expires</label>
+            <div class="formRow">
+                <input id="expires" type="date" />
+                <input id="issued" type="text" disabled placeholder="Issued (today auto)" />
+            </div>
+
+            <div class="actions">
+                <button id="createBtn" class="btn btn-primary">✨ Generate Token</button>
+                <button id="previewBtn" class="btn btn-ghost">👁️ Preview Server PNG</button>
+                <button id="clearBtn" class="btn btn-ghost">🧹 Clear</button>
+            </div>
+
+            <div class="muted">Tip: Use the server QR PNG for printing / physical badges — client QR is for quick preview.</div>
+
+            <div style="margin-top:18px">
+                <div style="display:flex;gap:10px;align-items:center">
+                    <div style="flex:1">
+                        <div style="margin-bottom:6px;font-size:13px;color:var(--muted)">Last generated token</div>
+                        <div id="tokenBox" class="tokenBox">(no token yet)</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                        <button id="copyBtn" class="btn btn-ghost">Copy</button>
+                        <button id="downloadServerBtn" class="btn btn-ghost">Download PNG</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="muted" style="margin-top:14px">Built for demo — tokens stored only in-memory on server restart.</div>
+    </div>
+
+    <div class="rightCol">
+        <div class="previewCard pulse" id="previewPanel">
+            <div style="font-size:14px;color:var(--muted);margin-bottom:8px">Client-side QR (fast preview)</div>
+
+            <!-- CORRECTED: use a canvas element for QR drawing -->
+            <div style="padding:12px;background:#fff;border-radius:10px;">
+                <canvas id="qrCanvas" width="220" height="220" style="display:block;border-radius:6px;"></canvas>
+            </div>
+
+            <div style="height:10px"></div>
+
+            <div style="font-size:14px;color:var(--muted);margin-bottom:8px">Server PNG (official)</div>
+            <img id="serverQrImg" class="serverQr" src="" alt="server qr"/>
+
+            <div style="height:10px"></div>
+
+            <div style="width:100%;text-align:center">
+                <div class="small">USN: <span id="previewUsn">-</span></div>
+                <div class="small">Name: <span id="previewName">-</span></div>
+                <div class="small">Route: <span id="previewRoute">-</span></div>
+                <div class="small">Expires: <span id="previewExpires">-</span></div>
+            </div>
+        </div>
+
+        <div style="width:100%;display:flex;gap:10px;justify-content:center">
+            <button id="quickScanBtn" class="btn btn-primary" style="width:100%">Open Scanner</button>
+        </div>
+
+        <footer>
+            <div>NMAMIT demo • SmartBus System</div>
+        </footer>
+    </div>
+</div>
+
+<script>
+    // helper selectors
+    const usnEl = document.getElementById('usn');
+    const nameEl = document.getElementById('name');
+    const routeEl = document.getElementById('route');
+    const expiresEl = document.getElementById('expires');
+    const issuedEl = document.getElementById('issued');
+    const tokenBox = document.getElementById('tokenBox');
+    const qrCanvas = /** @type {HTMLCanvasElement} */(document.getElementById('qrCanvas'));
+    const serverQrImg = document.getElementById('serverQrImg');
+    const previewUsn = document.getElementById('previewUsn');
+    const previewName = document.getElementById('previewName');
+    const previewRoute = document.getElementById('previewRoute');
+    const previewExpires = document.getElementById('previewExpires');
+    const previewPanel = document.getElementById('previewPanel');
+
+    const createBtn = document.getElementById('createBtn');
+    const previewBtn = document.getElementById('previewBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const copyBtn = document.getElementById('copyBtn');
+    const downloadServerBtn = document.getElementById('downloadServerBtn');
+    const quickScanBtn = document.getElementById('quickScanBtn');
+
+    // default issued = today
+    function setIssuedToday(){ issuedEl.value = new Date().toISOString().slice(0,10); }
+    setIssuedToday();
+
+    // small UX helpers
+    function showConfetti(){
+      try { confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } }); } catch(e) { /* ignore */ }
+    }
+    function pulseOn(){ previewPanel.classList.add('on'); setTimeout(()=>previewPanel.classList.remove('on'),900); }
+
+    // draw placeholder into canvas
+    function drawCanvasPlaceholder(){
+      const ctx = qrCanvas.getContext('2d');
+      // clear and draw white background
+      ctx.clearRect(0,0,qrCanvas.width, qrCanvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,qrCanvas.width, qrCanvas.height);
+      ctx.fillStyle = '#666666';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('QR preview', qrCanvas.width/2, qrCanvas.height/2 + 6);
+    }
+
+    // clear canvas and draw small spinner/blank
+    function clearCanvas(){
+      const ctx = qrCanvas.getContext('2d');
+      ctx.clearRect(0,0,qrCanvas.width, qrCanvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,qrCanvas.width, qrCanvas.height);
+    }
+
+    drawCanvasPlaceholder();
+
+    // generate token by calling server /api/add-student
+    async function createToken(){
+      const usn = usnEl.value.trim();
+      const name = nameEl.value.trim();
+      const route = routeEl.value.trim();
+      const expires = expiresEl.value;
+      if(!usn || !expires){ alert('USN and expiry required'); return; }
+
+      createBtn.disabled = true;
+      createBtn.textContent = 'Generating...';
+
+      try {
+        const res = await fetch('/api/add-student', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ usn, name, route, expires })
+        });
+
+        const json = await res.json();
+        if(res.status === 200 && json.token){
+          tokenBox.textContent = json.token;
+
+          // render client-side QR onto the canvas element
+          try {
+            // clear canvas first
+            clearCanvas();
+            await QRCode.toCanvas(qrCanvas, json.token, { width: qrCanvas.width, margin: 1, color: { dark: '#000000', light: '#ffffff' } });
+          } catch(e) {
+            // fallback: draw placeholder and show error in console
+            console.error('QR render failed', e);
+            drawCanvasPlaceholder();
+          }
+
+          // set server preview (PNG)
+          serverQrImg.src = `/api/qr/${encodeURIComponent(usn)}?t=${Date.now()}`;
+
+          // fill preview info
+          previewUsn.textContent = usn; previewName.textContent = name || '-'; previewRoute.textContent = route || '-'; previewExpires.textContent = expires;
+          showConfetti(); pulseOn();
+        } else {
+          tokenBox.textContent = JSON.stringify(json);
+          alert('Failed to generate token. See token box for details.');
+        }
+      } catch(e) {
+        alert('Network error: ' + e.message);
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = '✨ Generate Token';
+      }
+    }
+
+    createBtn.addEventListener('click', createToken);
+
+    // preview server PNG button (re-fetch)
+    previewBtn.addEventListener('click', () => {
+      const usn = usnEl.value.trim();
+      if(!usn){ alert('Enter USN to preview server PNG'); return; }
+      serverQrImg.src = `/api/qr/${encodeURIComponent(usn)}?t=${Date.now()}`;
+    });
+
+    // clear form
+    clearBtn.addEventListener('click', () => {
+      usnEl.value=''; nameEl.value=''; routeEl.value=''; expiresEl.value=''; setIssuedToday();
+      tokenBox.textContent='(no token yet)';
+      clearCanvas();
+      drawCanvasPlaceholder();
+      serverQrImg.src='';
+      previewUsn.textContent='-'; previewName.textContent='-'; previewRoute.textContent='-'; previewExpires.textContent='-';
+    });
+
+    // copy token
+    copyBtn.addEventListener('click', async () => {
+      const txt = tokenBox.textContent.trim();
+      if(!txt || txt==='(no token yet)'){ alert('No token to copy'); return; }
+      try { await navigator.clipboard.writeText(txt); alert('Token copied to clipboard'); }
+      catch(e){ alert('Copy failed — select and copy manually'); }
+    });
+
+    // download server PNG
+    downloadServerBtn.addEventListener('click', () => {
+      const usn = usnEl.value.trim();
+      if(!usn){ alert('Enter USN to download'); return; }
+      const url = `/api/qr/${encodeURIComponent(usn)}?t=${Date.now()}`;
+      const a = document.createElement('a'); a.href = url; a.download = `${usn}.png`; document.body.appendChild(a); a.click(); a.remove();
+    });
+
+    // quick open scanner (open scanner page)
+    quickScanBtn.addEventListener('click', ()=> location.href = '/scanner.html');
+
+    // small keyboard shortcut: ctrl+enter => generate
+    document.addEventListener('keydown', (e)=> { if(e.ctrlKey && e.key==='Enter') createBtn.click(); });
+
+</script>
+</body>
+</html>
